@@ -280,7 +280,7 @@ private Map parseCustomMessage(String description) {
 		def releasedTime = now()
 		def heldTime = releasedTime - heldTime
 		    log.debug "pushed ${pushedTime} released ${releasedTime} held ${heldTime}"
-		    if(heldTime => 4){
+		    if(heldTime >= 4){
 		    log.debug "Device was held"
 		    }
 		    else{
