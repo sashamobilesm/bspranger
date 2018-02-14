@@ -40,11 +40,12 @@
 metadata {
     definition (name: "Xiaomi Button", namespace: "bspranger", author: "bspranger") {
         capability "Battery"
-        capability "Button"
-        capability "Configuration"
         capability "Sensor"
-	capability "Health Check"
+        capability "Button"
+        capability "Actuator"
         capability "Momentary"
+        capability "Configuration"
+        capability "Health Check"
         
         attribute "lastCheckin", "string"
         attribute "lastCheckinDate", "Date"
@@ -52,6 +53,7 @@ metadata {
         attribute "lastpressedDate", "string"
         attribute "batterylevel", "string"
         attribute "batteryRuntime", "String"
+        attribute "countdown", "boolean"
 
         fingerprint endpointId: "01", profileId: "0104", deviceId: "0104", inClusters: "0000,0003,FFFF,0019", outClusters: "0000,0004,0003,0006,0008,0005,0019", manufacturer: "LUMI", model: "lumi.sensor_switch", deviceJoinName: "Original Xiaomi Button"
 
@@ -93,7 +95,8 @@ metadata {
    }
    preferences {
 		//Button Config
-        	input name: "PressType", type: "enum", options: ["Momentary", "Toggle"], title: "Momentary or toggle? ", defaultValue: "Momentary"
+		input name: "PressType", type: "enum", options: ["Momentary", "Toggle"], title: "Momentary or Toggle mode? ", defaultValue: "Momentary"
+		input "waittoHeld", "number", title: "If the button is held, wait how many seconds until sending a 'held' message?", description: "Enter number of seconds (default = 2)"
 		//Date & Time Config
 		input description: "", type: "paragraph", element: "paragraph", title: "DATE & CLOCK"    
 		input name: "dateformat", type: "enum", title: "Set Date Format\n US (MDY) - UK (DMY) - Other (YMD)", description: "Date Format", options:["US","UK","Other"]
@@ -102,7 +105,7 @@ metadata {
             	input description: "If you have installed a new battery, the toggle below will reset the Changed Battery date to help remember when it was changed.", type: "paragraph", element: "paragraph", title: "CHANGED BATTERY DATE RESET"
 		input name: "battReset", type: "bool", title: "Battery Changed?"
 		//Battery Voltage Offset
-            	input description: "Only change the settings below if you know what you're doing.", type: "paragraph", element: "paragraph", title: "ADVANCED SETTINGS"
+		input description: "Only change the settings below if you know what you're doing.", type: "paragraph", element: "paragraph", title: "ADVANCED SETTINGS"
 		input name: "voltsmax", title: "Max Volts\nA battery is at 100% at __ volts\nRange 2.8 to 3.4", type: "decimal", range: "2.8..3.4", defaultValue: 3, required: false
 		input name: "voltsmin", title: "Min Volts\nA battery is at 0% (needs replacing) at __ volts\nRange 2.0 to 2.7", type: "decimal", range: "2..2.7", defaultValue: 2.5, required: false
     }
@@ -113,8 +116,8 @@ def push() {
 	log.debug "Virtual App Button Pressed"
 	def now = formatDate()
 	def nowDate = new Date(now).getTime()
-        sendEvent(name: "lastpressed", value: now, displayed: false)
-        sendEvent(name: "lastpressedDate", value: nowDate, displayed: false) 
+	sendEvent(name: "lastpressed", value: now, displayed: false)
+	sendEvent(name: "lastpressedDate", value: nowDate, displayed: false) 
 	sendEvent(name: "button", value: "pushed", data: [buttonNumber: 1], descriptionText: "$device.displayName app button was pushed", isStateChange: true)
 	sendEvent(name: "button", value: "released", data: [buttonNumber: 1], descriptionText: "$device.displayName app button was released", isStateChange: true)
 }
@@ -134,25 +137,83 @@ def parse(String description) {
     Map map = [:]
 
 	// Send message data to appropriate parsing function based on the type of report
-    if (description?.startsWith('on/off: ')) 
-    {
-        map = parseCustomMessage(description) 
-        sendEvent(name: "lastpressed", value: now, displayed: false)
-        sendEvent(name: "lastpressedDate", value: nowDate, displayed: false) 
+    if (description?.startsWith('on/off: ')) {
+        map = parseButtonMessage(description)  
     }
-    else if (description?.startsWith('catchall:')) 
-    {
+    else if (description?.startsWith('catchall:')) {
         map = parseCatchAllMessage(description)
     }
-    else if (description?.startsWith("read attr - raw: "))
-    {
+    else if (description?.startsWith("read attr - raw: ")) {
         map = parseReadAttrMessage(description)  
     }
     log.debug "${device.displayName}: Parse returned $map"
     def results = map ? createEvent(map) : null
 
-    return results;
+    return results
 }
+
+private Map parseButtonMessage(String description) {
+	def result = [:]
+	def onOff = (description - "on/off: ")
+    
+	//update lastpressed if button is pressed
+	if (onOff == '0') {
+		sendEvent(name: "lastpressed", value: now, displayed: false)
+		sendEvent(name: "lastpressedDate", value: nowDate, displayed: false)
+	}
+
+	//in toggle mode only toggle when button is pressed
+	if (PressType == "Toggle") {
+		if (onOff == '0') {
+			log.debug "BUTTON TEST: Toggle detected button press, now toggling state"
+			if (state.button != "pushed")
+				result = getContactResult("pushed")
+			else
+				result = getContactResult("released")
+		}
+	}
+	//momentary mode
+	else {
+		//when button is pressed start countdown to set held state
+		if (onOff == '0') {
+			log.debug "BUTTON TEST: Momentary detected button press, starting countdown of ${waittoHeld} seconds" 
+			runIn((waittoHeld ? waittoHeld : 2), heldState)
+			sendEvent(name: "countdown", value: true, displayed: false)
+		}
+		//when button is released set released state
+		else {
+			log.debug "BUTTON TEST: Momentary detected button release, setting countdown to false"
+			result = getContactResult("released")
+			sendEvent(name: "countdown", value: false, displayed: false)
+		}
+	}
+	return result
+}
+
+private Map getContactResult(value) {
+	log.debug "BUTTON TEST: Creating map to change to ${value} state"
+    def descriptionText = "${device.displayName} was ${value}"
+    return [
+        name: 'button',
+        value: value,
+        data: [buttonNumber: "1"],
+        descriptionText: descriptionText,
+        isStateChange: true
+    ]
+}
+
+//if button has not been released (countdown = true) then set held state 
+def heldState() {
+	Map map = [:]
+	log.debug "BUTTON TEST: Countdown finished, checking if released..."
+	if (device.currentState('countdown')) {
+		log.debug "BUTTON TEST: Button not released yet, setting Held state"
+		map = getContactResult("held")
+		createEvent(map)
+		log.debug "BUTTON TEST: Set Held state"
+	}
+}
+	
 
 private Map parseReadAttrMessage(String description) {
     def buttonRaw = (description - "read attr - raw:")
@@ -242,71 +303,6 @@ private Map getBatteryResult(rawValue) {
     
     log.debug "${device.displayName}: ${result}"
     return createEvent(result)
-}
-
-private Map parseCustomMessage(String description) {
-    def result = [:]
-    if (description?.startsWith('on/off: ')) 
-    {
-        if (PressType == "Toggle")
-        {
-            if ((state.button != "pushed") && (state.button != "released")) 
-            {
-                state.button = "released"
-            }
-            if (description == 'on/off: 0')
-            {
-                if (state.button == "released") 
-                {
-                   result = getContactResult("pushed")
-                   state.button = "pushed"
-                }
-                else 
-                {
-                   result = getContactResult("released")
-                   state.button = "released"
-                }
-            }
-        }
-        else
-        {
-            if (description == 'on/off: 0')
-            {
-                //result = getContactResult("pushed")
-		def now = formatDate()
-		def pushedTime = new Date(now).getTime()
-		    log.debug "pushed ${pushedTime}"
-
-            } 
-            else if (description == 'on/off: 1')
-            {
-		def now = formatDate()
-		def releasedTime = new Date(now).getTime()
-         log.debug "released ${releasedTime}"
-		def heldTime = releasedTime - pushedTime
-		    log.debug "pushed ${pushedTime} released ${releasedTime} held ${heldTime}"
-		    if(heldTime >= 4000){
-		    log.debug "Device was held"
-		    }
-		    else{
-		    log.debug "Device was pushed"    
-		    }
-            }
-            }
-        }
-        return result
-    }
-}
-
-private Map getContactResult(value) {
-    def descriptionText = "${device.displayName} was ${value == 'pushed' ? 'pushed' : 'released'}"
-    return [
-        name: 'button',
-        value: value,
-	data: [buttonNumber: "1"],
-        descriptionText: descriptionText,
-	isStateChange: true
-    ]
 }
 
 //Reset the date displayed in Battery Changed tile to current date
