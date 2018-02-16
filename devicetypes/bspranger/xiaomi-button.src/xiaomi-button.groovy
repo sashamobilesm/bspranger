@@ -1,6 +1,6 @@
 /**
  *  Xiaomi Zigbee Button
- *  Version 1.0
+ *  Version 1.1
  *
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -51,9 +51,8 @@ metadata {
         attribute "lastCheckinDate", "Date"
         attribute "lastpressed", "string"
         attribute "lastpressedDate", "string"
-        attribute "batterylevel", "string"
-        attribute "batteryRuntime", "String"
-        attribute "countdown", "boolean"
+        attribute "batteryRuntime", "string"
+        attribute "stillHeld", "string"
 
         fingerprint endpointId: "01", profileId: "0104", deviceId: "0104", inClusters: "0000,0003,FFFF,0019", outClusters: "0000,0004,0003,0006,0008,0005,0019", manufacturer: "LUMI", model: "lumi.sensor_switch", deviceJoinName: "Original Xiaomi Button"
 
@@ -61,8 +60,8 @@ metadata {
 }
     
     simulator {
-          status "button 1 pressed": "on/off: 0"
-          status "button 1 released": "on/off: 1"
+          status "Pressed": "on/off: 0"
+          status "Released": "on/off: 1"
     }
     
     tiles(scale: 2) {
@@ -174,25 +173,40 @@ private Map parseButtonMessage(String description) {
 	}
 	//momentary mode
 	else {
-		//when button is pressed start countdown to set held state
+		//when button is pressed start runIn countdown to set held state
 		if (onOff == '0') {
-			log.debug "BUTTON TEST: Momentary detected button press, starting countdown of ${waittoHeld} seconds" 
-			runIn((waittoHeld ? waittoHeld : 2), heldState)
-			sendEvent(name: "countdown", value: true, displayed: false)
+			log.debug "BUTTON TEST: Momentary detected button press"
+			log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+            sendEvent(name: "stillHeld", value: true, displayed: false)
+			log.debug "BUTTON TEST: Set stillHeld to <${device.currentValue("stillHeld")}>"
+			runIn((waittoHeld ?: 5), heldState)
+			log.debug "BUTTON TEST: Started countdown of ${(waittoHeld ?: 5)} seconds"
 		}
-		//when button is released set released state
+		//when button is released... 
 		else {
-			log.debug "BUTTON TEST: Momentary detected button release, setting countdown to false"
+			log.debug "BUTTON TEST: Momentary detected button release"
+            sendEvent(name: "stillHeld", value: false, displayed: false)
+			log.debug "BUTTON TEST: Set stillHeld to <${device.currentValue("stillHeld")}>"
+			// if not in held state set pressed state first
+			log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+			if (device.currentValue("button") != "held") {
+				result = getContactResult("pressed")
+				log.debug "BUTTON TEST: Countdown not finished, created map to change to PRESSED state" 
+				sendEvent(result)
+				log.debug "BUTTON TEST: Created event: ${result}"
+				log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+			}
+ 			// ...then set released state
 			result = getContactResult("released")
-			sendEvent(name: "countdown", value: false, displayed: false)
+			log.debug "BUTTON TEST: Created map to change to RELEASED state"
 		}
 	}
 	return result
 }
 
 private Map getContactResult(value) {
-	log.debug "BUTTON TEST: Creating map to change to ${value} state"
     def descriptionText = "${device.displayName} was ${value}"
+	log.debug "BUTTON TEST: Creating map to change to ${value} state"
     return [
         name: 'button',
         value: value,
@@ -205,13 +219,16 @@ private Map getContactResult(value) {
 //if button has not been released (countdown = true) then set held state 
 def heldState() {
 	Map map = [:]
-	log.debug "BUTTON TEST: Countdown finished, checking if released..."
-	if (device.currentState('countdown')) {
-		log.debug "BUTTON TEST: Button not released yet, setting Held state"
+	log.debug "BUTTON TEST: Countdown finished, and stillHeld is <${device.currentValue("stillHeld")}>"
+	if (device.currentValue("stillHeld") == "true") {
 		map = getContactResult("held")
-		createEvent(map)
-		log.debug "BUTTON TEST: Set Held state"
+		log.debug "BUTTON TEST: Created map to change to HELD state"
+		sendEvent(map)
+		log.debug "BUTTON TEST: Sent event: ${map}"
+		log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
 	}
+    else
+	log.debug "BUTTON TEST: Button NOT held, so no action taken"
 }
 	
 
