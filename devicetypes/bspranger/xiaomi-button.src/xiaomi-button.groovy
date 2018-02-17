@@ -161,44 +161,41 @@ private Map parseButtonMessage(String description) {
 		sendEvent(name: "lastpressedDate", value: nowDate, displayed: false)
 	}
 
-	//in toggle mode only toggle when button is pressed
+	// in toggle mode only toggle when button is pressed
 	if (PressType == "Toggle") {
 		if (onOff == '0') {
-			log.debug "BUTTON TEST: Toggle detected button press, now toggling state"
+			//log.debug "BUTTON TEST: Toggle detected button press, now toggling state"
 			if (state.button != "pushed")
 				result = getContactResult("pushed")
 			else
 				result = getContactResult("released")
 		}
 	}
-	//momentary mode
+	// momentary mode
 	else {
-		//when button is pressed start runIn countdown to set held state
+		// when button is pressed start runIn countdown to set held state
 		if (onOff == '0') {
-			log.debug "BUTTON TEST: Momentary detected button press"
-			log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+			//log.debug "BUTTON TEST: Momentary detected button press"
+			//log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
             sendEvent(name: "stillHeld", value: true, displayed: false)
-			log.debug "BUTTON TEST: Set stillHeld to <${device.currentValue("stillHeld")}>"
 			runIn((waittoHeld ?: 5), heldState)
-			log.debug "BUTTON TEST: Started countdown of ${(waittoHeld ?: 5)} seconds"
+			//log.debug "BUTTON TEST: Started countdown of ${(waittoHeld ?: 5)} seconds"
 		}
-		//when button is released... 
+		// when button is released... 
 		else {
-			log.debug "BUTTON TEST: Momentary detected button release"
+			//log.debug "BUTTON TEST: Momentary detected button release"
             sendEvent(name: "stillHeld", value: false, displayed: false)
-			log.debug "BUTTON TEST: Set stillHeld to <${device.currentValue("stillHeld")}>"
+			//log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+
 			// if not in held state set pressed state first
-			log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
 			if (device.currentValue("button") != "held") {
-				result = getContactResult("pressed")
-				log.debug "BUTTON TEST: Countdown not finished, created map to change to PRESSED state" 
+				result = getContactResult("pushed")
+				//log.debug "BUTTON TEST: Countdown not finished, created map to change to PUSHED state" 
 				sendEvent(result)
-				log.debug "BUTTON TEST: Created event: ${result}"
-				log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+				//log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
 			}
  			// ...then set released state
 			result = getContactResult("released")
-			log.debug "BUTTON TEST: Created map to change to RELEASED state"
 		}
 	}
 	return result
@@ -219,16 +216,14 @@ private Map getContactResult(value) {
 //if button has not been released (countdown = true) then set held state 
 def heldState() {
 	Map map = [:]
-	log.debug "BUTTON TEST: Countdown finished, and stillHeld is <${device.currentValue("stillHeld")}>"
+	//log.debug "BUTTON TEST: Countdown finished, and stillHeld is <${device.currentValue("stillHeld")}>"
 	if (device.currentValue("stillHeld") == "true") {
 		map = getContactResult("held")
-		log.debug "BUTTON TEST: Created map to change to HELD state"
+		//log.debug "BUTTON TEST: Created map to change to HELD state"
 		sendEvent(map)
-		log.debug "BUTTON TEST: Sent event: ${map}"
-		log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
+		//log.debug "BUTTON TEST: Sent event: ${map}"
+		//log.debug "BUTTON TEST: Button current state is <${device.currentValue("button")}>"
 	}
-    else
-	log.debug "BUTTON TEST: Button NOT held, so no action taken"
 }
 	
 
@@ -332,7 +327,6 @@ def resetBatteryRuntime(paired) {
 
 // installed() runs just after a sensor is paired using the "Add a Thing" method in the SmartThings mobile app
 def installed() {
-	state.battery = 0
 	if (!batteryRuntime) resetBatteryRuntime(true)
 	checkIntervalEvent("installed")
 }
@@ -340,7 +334,6 @@ def installed() {
 // configure() runs after installed() when a sensor is paired
 def configure() {
 	log.debug "${device.displayName}: configuring"
-		state.battery = 0
 	if (!batteryRuntime) resetBatteryRuntime(true)
 	checkIntervalEvent("configured")
 	return
