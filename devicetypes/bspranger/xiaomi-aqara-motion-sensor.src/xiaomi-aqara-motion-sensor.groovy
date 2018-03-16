@@ -265,7 +265,6 @@ def stopMotion() {
 def stopIgnoreMotion() {
 	state.ignoreMotion = false
 	log.debug "${device.displayName}: Finished ignoring motion detected messages"
-	}
 }
 
 //Reset the date displayed in Battery Changed tile to current date
