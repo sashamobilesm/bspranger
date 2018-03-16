@@ -100,7 +100,7 @@ metadata {
 	preferences {
 		//Reset to No Motion Config
 		input description: "This setting only changes how long MOTION DETECTED is reported in SmartThings. The sensor hardware always remains blind to motion for 60 seconds after any activity.", type: "paragraph", element: "paragraph", title: "MOTION RESET"
-		input "motionreset", "number", title: "", description: "Enter number of seconds (default = 60)", range: "1..7200"
+		input "motionreset", "number", title: "", description: "Enter number of seconds (default = 61)", range: "1..7200"
 		//Date & Time Config
 		input description: "", type: "paragraph", element: "paragraph", title: "DATE & CLOCK"    
 		input name: "dateformat", type: "enum", title: "Set Date Format\n US (MDY) - UK (DMY) - Other (YMD)", description: "Date Format", options:["US","UK","Other"]
@@ -170,16 +170,20 @@ private Map parseReportAttributeMessage(String description) {
     def now = formatDate()
 
 	// The sensor only sends a motion detected message so the reset to no motion is performed in code
-    if (cluster == "0406" & value == "01") {
+    if (cluster == "0406" & value == "01" & state.ignoreMotion == false) {
 		log.debug "${device.displayName} detected motion"
-		def seconds = motionreset ? motionreset : 120
+		def secondsReset = motionreset ? motionreset : 61
+		def secondsIgnore = (secondsReset < 6) ? 1 : secondsReset - 5
 		resultMap = [
 			name: 'motion',
 			value: 'active',
 			descriptionText: "${device.displayName} detected motion"
 		]
 		sendEvent(name: "lastMotion", value: now, displayed: false)
-		runIn(seconds, stopMotion)
+		runIn(secondsReset, stopMotion)
+		state.ignoreMotion = true
+		runIn(secondsIgnore, stopIgnoreMotion)
+		log.debug "${device.displayName}: Motion detected messages will be ignored for $secondsIgnore seconds"
 	}
 	else if (cluster == "0000" && attrId == "0005") {
         def modelName = ""
@@ -251,9 +255,16 @@ private Map getBatteryResult(rawValue) {
 // If currently in 'active' motion detected state, stopMotion() resets to 'inactive' state and displays 'no motion'
 def stopMotion() {
 	if (device.currentState('motion')?.value == "active") {
-		def seconds = motionreset ? motionreset : 120
+		def seconds = motionreset ? motionreset : 61
 		sendEvent(name:"motion", value:"inactive", isStateChange: true)
 		log.debug "${device.displayName} reset to no motion after ${seconds} seconds"
+	}
+}
+
+// Resume allowing the DTH to handle motion detected messages
+def stopIgnoreMotion() {
+	state.ignoreMotion = false
+	log.debug "${device.displayName}: Finished ignoring motion detected messages"
 	}
 }
 
@@ -267,7 +278,7 @@ def resetBatteryRuntime(paired) {
 
 // installed() runs just after a sensor is paired using the "Add a Thing" method in the SmartThings mobile app
 def installed() {
-	state.battery = 0
+	state.ignoreMotion == false
 	if (!batteryRuntime) resetBatteryRuntime(true)
 	checkIntervalEvent("installed")
 }
@@ -275,7 +286,7 @@ def installed() {
 // configure() runs after installed() when a sensor is paired
 def configure() {
 	log.debug "${device.displayName}: configuring"
-		state.battery = 0
+	state.ignoreMotion == false
 	if (!batteryRuntime) resetBatteryRuntime(true)
 	checkIntervalEvent("configured")
 	return
@@ -283,8 +294,9 @@ def configure() {
 
 // updated() will run twice every time user presses save in preference settings page
 def updated() {
-		checkIntervalEvent("updated")
-		if(battReset){
+	checkIntervalEvent("updated")
+	state.ignoreMotion == false
+	if(battReset){
 		resetBatteryRuntime()
 		device.updateSetting("battReset", false)
 	}
