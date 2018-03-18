@@ -314,7 +314,7 @@ def updated() {
     stopMotion()
 	if (testMode) {
 		if (!state.testModeActive) {
-			runIn(30, finishTestMode)
+			runIn(120, finishTestMode)
 			state.testModeActive = true
 			log.debug "${device.displayName}: Testing Mode activated for 60 minutes"
 		} else
