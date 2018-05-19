@@ -1,7 +1,7 @@
 /**
  *  Xiaomi Aqara Curtain Motor - Model ZNCLDJ11LM
  *  Device Handler for SmartThings
- *  Version 0.1b
+ *  Version 0.2b
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -13,11 +13,12 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  *  Contributions to code from alecm, alixjg, bspranger, gn0st1c, Inpier, foz333, jmagnuson, KennethEvers, rinkek, ronvandegraaf, snalee, tmleaf
- *  Discussion board for this DH: https://community.smartthings.com/t/original-aqara-xiaomi-zigbee-sensors-contact-temp-motion-button-outlet-leak-etc/
+ *  Discussion board for this DH: https://community.smartthings.com/t/original-aqara-xiaomi-zigbee-sensors-contact-temp-motion-button-outlet-leak-etc
  *
  *  Useful Links:
- *	YouTube review... https://www.youtube.com/watch?v=GkZ16IuoT-c
- *	Xiaomi website product page... https://xiaomi-mi.com/sockets-and-sensors/xiaomi-aqara-smart-curtain-controller-white/
+ *  Xiaomi website product page... https://xiaomi-mi.com/sockets-and-sensors/xiaomi-aqara-smart-curtain-controller-white/
+ *  Manual (translated to English)... http://files.xiaomi-mi.com/files/aqara/Aqara_Smart_Curtain_Controller_EN.pdf
+ *  YouTube review... https://www.youtube.com/watch?v=GkZ16IuoT-c
  *
  *  Known issues:
  *	Inconsistent rendering of user interface text/graphics between iOS and Android devices - This is due to SmartThings, not this device handler
@@ -37,16 +38,18 @@
  *
  *  Change Log:
  *	15.05.2018 - veeceeoh - Started work on DTH
+ *	18.05.2018 - veeceeoh - Major changes, including changing from Switch capability to Door Control
  */
 
 metadata {
 	definition (name: "Xiaomi Aqara Curtain Motor", namespace: "bspranger", author: "veeceeoh") {
 		capability "Actuator"
 		capability "Configuration"
+		capability "Door Control"
+		capability "Health Check"
 		capability "Refresh"
-		capability "Switch"
 
-		attribute "lastCheckin", "string"
+		attribute "lastCheckinCoRE", "string"
 
 		fingerprint endpointId: "01", profileID: "0260", deviceID: "0514", inClusters: "0000,0001", outClusters: "0019", manufacturer: "LUMI", model: "lumi.curtain", deviceJoinName: "Aqara Curtain Motor"
 	}
@@ -56,68 +59,88 @@ metadata {
 	}
 
 	tiles(scale: 2) {
-		multiAttributeTile(name:"switch", type: "lighting", width: 6, height: 4, canChangeIcon: true){
-			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
-				attributeState "on", label:'${name}', action:"switch.off", icon:"st.switches.light.on", backgroundColor:"#00a0dc", nextState:"turningOff"
-				attributeState "off", label:'${name}', action:"switch.on", icon:"st.switches.light.off", backgroundColor:"#ffffff", nextState:"turningOn"
-				attributeState "turningOn", label:'${name}', action:"switch.off", icon:"st.switches.light.on", backgroundColor:"#00a0dc", nextState:"turningOff"
-				attributeState "turningOff", label:'${name}', action:"switch.on", icon:"st.switches.light.off", backgroundColor:"#ffffff", nextState:"turningOn"
+		multiAttributeTile(name:"door", type: "toggle", width: 6, height: 4, canChangeIcon: true){
+			tileAttribute ("device.door", key: "PRIMARY_CONTROL") {
+				// For now, ST's contact sensor open - close icons are used until better ones are found or created
+				attributeState "unknown", label:'${name}', action:"door control.open", icon:"st.contact.contact.open", backgroundColor:"#00a0dc"
+				attributeState "closed", label:'${name}', action:"door control.open", icon:"st.contact.contact.closed", backgroundColor:"#ffffff", nextState:"opening"
+				attributeState "open", label:'${name}', action:"door control.close", icon:"st.contact.contact.open", backgroundColor:"#00a0dc", nextState:"closing"
+				attributeState "opening", label:'${name}', icon:"st.contact.contact.closed", backgroundColor:"#00a0dc"
+				attributeState "closing", label:'${name}', icon:"st.contact.contact.open", backgroundColor:"#ffffff"
 			}
-			tileAttribute("device.lastCheckin", key: "SECONDARY_CONTROL") {
-				attributeState("default", label:'Last Update: ${currentValue}',icon: "st.Health & Wellness.health9")
-			}
+			// Secondary Tile attribute display to be set up in future
+			//tileAttribute("device.curtainPosition", key: "SECONDARY_CONTROL") {
+				//attributeState("default", label:'Current Position: ${currentValue}')
+			//}
 		}
-		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
+		standardTile("refresh", "device.door", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+			state "default", label:'', action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
-		main (["switch"])
-		details(["switch", "refresh"])
+		standardTile("open", "device.door", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+			state "default", label:'Open', action:"door control.open", icon:"st.contact.contact.open"
+		}
+		standardTile("close", "device.door", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+			state "default", label:'Close', action:"door control.close", icon:"st.contact.contact.closed"
+		}
+		main (["door"])
+		details(["door", "open", "refresh", "close"])
+	}
+
+	preferences {
+		input description: "These settings affect the display of messages in the Live Logging tab of the SmartThings IDE.", type: "paragraph", element: "paragraph", title: "LIVE LOGGING"
+		input name: "infoLogging", type: "bool", title: "Display info log messages?", defaultValue: true
+		input name: "debugLogging", type: "bool", title: "Display debug log messages?"
 	}
 }
 
 // Parse incoming device messages to generate events
 def parse(String description) {
-   log.debug "Parsing '${description}'"
-   def value = zigbee.parse(description)?.text
-   log.debug "Parse: $value"
-   Map map = [:]
+	displayDebugLog(": Parsing $description")
+	Map result = [:]
 
-   if (description?.startsWith('catchall:')) {
-		map = parseCatchAllMessage(description)
+	// catchall messages include verification that an on-off command was received
+	// and also a regular check-in message
+	if (description?.startsWith('catchall:')) {
+		result = parseCatchAllMessage(description)
 	}
+	// The device's read attribute messages seem to all be sent from cluster 000D, attribute 0055,
+	// which is supposed to be the present value of analog output, but instead the values received
+	// don't seem to follow the correct Zigbee specification and are likely proprietary values.
+	// Most of the info log output that needs to be examined will be generated by this function call.
 	else if (description?.startsWith('read attr -')) {
-		map = parseReportAttributeMessage(description)
+		result = parseReportAttributeMessage(description)
 	}
-    else if (description?.startsWith('on/off: ')){
-    	def resultMap = zigbee.getKnownDescription(description)
-   		log.debug "${resultMap}"
+	// on-off messages are sent shortly after the curtain motor receives an on-off command
+	// and do not indicate whether the motor has actually finished opening or closing
+	else if (description?.startsWith('on/off: ')){
+		result = parseOpenCloseReport(description - "on/off: ")
+	}
 
-        map = parseCustomMessage(description)
-    }
-
-	log.debug "Parse returned $map"
-    //  send event for heartbeat
-    def now = new Date()
-    sendEvent(name: "lastCheckin", value: now)
-
-	def results = map ? createEvent(map) : null
-	return results;
+	if (result != [:]) {
+		displayDebugLog(": Creating event $result")
+		return createEvent(result)
+	} else
+		return [:]
 }
 
 private Map parseCatchAllMessage(String description) {
-	Map resultMap = [:]
-	def cluster = zigbee.parse(description)
-	log.debug cluster
+	Map result = [:]
+	def catchall = zigbee.parse(description)
+	displayDebugLog(": Zigbee Parse: $catchall")
 
-    if (cluster.clusterId == 0x0006 && cluster.command == 0x01){
-    	def onoff = cluster.data[-1]
-        if (onoff == 1)
-        	resultMap = createEvent(name: "switch", value: "on")
-        else if (onoff == 0)
-            resultMap = createEvent(name: "switch", value: "off")
-    }
-
-	return resultMap
+	if (catchall.clusterId == 0x0006 && catchall.command == 0x0B){
+		def onoff = catchall.data[0]   // not sure if this will grab the correct data - look at info log output
+		displayInfoLog(": Cluster 0006, data = $onoff")
+		if (onoff == 1) {
+			result = [name: "door", value: "opening", descriptionText: "$device.displayName is opening"]
+			displayInfoLog(": Received command to open")
+		}
+		else {
+			result = [name: "door", value: "closing", descriptionText: "$device.displayName is closing"]
+			displayInfoLog(": Received command to close")
+		}
+	}
+	return result
 }
 
 private Map parseReportAttributeMessage(String description) {
@@ -125,54 +148,101 @@ private Map parseReportAttributeMessage(String description) {
 		def nameAndValue = param.split(":")
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
 	}
-	//log.debug "Desc Map: $descMap"
 
-	Map resultMap = [:]
-
-	if (descMap.cluster == "0001" && descMap.attrId == "0020") {
-		resultMap = getBatteryResult(convertHexToInt(descMap.value / 2))
+	if (descMap.clusterId == 0x000D && descMap.attrId == 0055){
+		displayInfoLog ": Cluster 000D / Attr 0055 Message: Byte #3 = ${descMap.raw[22..23]} (decimal ${Integer.parseInt(descMap.raw[22..23],16)})"
+		displayInfoLog ": Cluster 000D / Attr 0055 Message: Byte #4 = ${descMap.raw[24..25]}"
+		displayInfoLog ": Cluster 000D / Attr 0055 Message: Last 4 bytes = ${descMap.raw[32..39]}"
 	}
-	else if (descMap.cluster == "0008" && descMap.attrId == "0000") {
-		resultMap = createEvent(name: "switch", value: "off")
-	}
-	return resultMap
+	else
+		displayInfoLog ": Unrecognized Read Attribute Message: $descMap"
+	return [:]
 }
 
-def off() {
-    log.debug "off()"
-	sendEvent(name: "switch", value: "off")
-	"st cmd 0x${device.deviceNetworkId} 1 6 0 {}"
+private Map parseOpenCloseReport(String description) {
+	if (description == '0')
+		displayInfoLog ": Close command confirmed"
+	else
+		displayInfoLog ": Open command confirmed"
+	runIn(8, motorFinished)
+	return [:]
 }
 
-def on() {
-   log.debug "on()"
-	sendEvent(name: "switch", value: "on")
-	"st cmd 0x${device.deviceNetworkId} 1 6 1 {}"
+def close() {
+	displayInfoLog ": Sending close command"
+	zigbee.off()
+	// "st cmd 0x${device.deviceNetworkId} 1 6 0 {}"    <<< This method of sending Zigbee commands has been deprecated
+}
+
+def open() {
+	displayInfoLog ": Sending open command"
+	zigbee.on()
+	// "st cmd 0x${device.deviceNetworkId} 1 6 1 {}"    <<< This method of sending Zigbee commands has been deprecated
+}
+
+def motorFinished() {
+	def newState = "open"
+	if (device.currentState('door')?.value == "closing")
+		newState = "closed"
+	sendEvent(name: "door", value: newState, descriptionText: "$device.displayName is $newState")
+	displayInfoLog ": Automatically set state to $newState after 8 seconds"
 }
 
 def refresh() {
 	log.debug "refreshing"
-    [
-        "st rattr 0x${device.deviceNetworkId} 1 6 0", "delay 500",
-        "st rattr 0x${device.deviceNetworkId} 1 6 0", "delay 250",
-        "st rattr 0x${device.deviceNetworkId} 1 2 0", "delay 250",
-        "st rattr 0x${device.deviceNetworkId} 1 1 0", "delay 250",
-        "st rattr 0x${device.deviceNetworkId} 1 0 0"
-    ]
+	zigbee.onOffRefresh() + zigbee.onOffConfig()
+/**
+	// The read attribute commands below use a deprecated method
+	[
+		"st rattr 0x${device.deviceNetworkId} 1 6 0", "delay 500",
+		"st rattr 0x${device.deviceNetworkId} 1 6 0", "delay 250",
+		"st rattr 0x${device.deviceNetworkId} 1 2 0", "delay 250",
+		"st rattr 0x${device.deviceNetworkId} 1 1 0", "delay 250",
+		"st rattr 0x${device.deviceNetworkId} 1 0 0"
+	]
+**/
 }
 
-private Map parseCustomMessage(String description) {
-	def result
-	if (description?.startsWith('on/off: ')) {
-    	if (description == 'on/off: 0')
-    		result = createEvent(name: "switch", value: "off")
-    	else if (description == 'on/off: 1')
-    		result = createEvent(name: "switch", value: "on")
-	}
-
-    return result
+private def displayDebugLog(message) {
+	if (debugLogging)
+		log.debug "${device.displayName}${message}"
 }
 
-private Integer convertHexToInt(hex) {
-	Integer.parseInt(hex,16)
+private def displayInfoLog(message) {
+	if (infoLogging || state.prefsSetCount < 3)
+		log.info "${device.displayName}${message}"
+}
+
+// installed() runs just after a device is paired using the "Add a Thing" method in the SmartThings mobile app
+def installed() {
+	state.prefsSetCount = 0
+	displayInfoLog(": Installing")
+	checkIntervalEvent("")
+}
+
+// configure() runs after installed() when a device is paired
+def configure() {
+	displayInfoLog(": Configuring")
+	refresh()
+	checkIntervalEvent("configured")
+	return
+}
+
+// updated() will run twice every time user presses save in preference settings page
+def updated() {
+	displayInfoLog(": Updating preference settings")
+	if (!state.prefsSetCount)
+		state.prefsSetCount = 1
+	else if (state.prefsSetCount < 3)
+		state.prefsSetCount = state.prefsSetCount + 1
+	displayInfoLog(": Info message logging enabled")
+	displayDebugLog(": Debug message logging enabled")
+	checkIntervalEvent("preferences updated")
+}
+
+private checkIntervalEvent(text) {
+		// Device wakes up every 50 or 60 minutes, this interval allows us to miss one wakeup notification before marking offline
+		if (text)
+			displayInfoLog(": Set health checkInterval when ${text}")
+		sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 2 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
 }
