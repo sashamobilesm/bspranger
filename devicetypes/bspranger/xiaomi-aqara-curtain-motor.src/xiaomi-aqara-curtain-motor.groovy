@@ -1,7 +1,7 @@
 /**
  *  Xiaomi Aqara Curtain Motor - Model ZNCLDJ11LM
  *  Device Handler for SmartThings
- *  Version 0.2b
+ *  Version 0.3b
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -129,8 +129,7 @@ private Map parseCatchAllMessage(String description) {
 	displayDebugLog(": Zigbee Parse: $catchall")
 
 	if (catchall.clusterId == 0x0006 && catchall.command == 0x0B){
-		def onoff = catchall.data[0]   // not sure if this will grab the correct data - look at info log output
-		displayInfoLog(": Cluster 0006, data = $onoff")
+		def onoff = catchall.data[0]
 		if (onoff == 1) {
 			result = [name: "door", value: "opening", descriptionText: "$device.displayName is opening"]
 			displayInfoLog(": Received command to open")
@@ -148,15 +147,29 @@ private Map parseReportAttributeMessage(String description) {
 		def nameAndValue = param.split(":")
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
 	}
+	Map result = [:]
 
-	if (descMap.clusterId == 0x000D && descMap.attrId == 0055){
-		displayInfoLog ": Cluster 000D / Attr 0055 Message: Byte #3 = ${descMap.raw[22..23]} (decimal ${Integer.parseInt(descMap.raw[22..23],16)})"
-		displayInfoLog ": Cluster 000D / Attr 0055 Message: Byte #4 = ${descMap.raw[24..25]}"
-		displayInfoLog ": Cluster 000D / Attr 0055 Message: Last 4 bytes = ${descMap.raw[32..39]}"
+	// Report messages about the state of the motor appear to be sent from Cluster 000D / attrId 0055
+	if (descMap.clusterId == "000D" && descMap.attrId == "0055"){
+		// Output log messages of the data of interest from the attribute report value received
+		displayInfoLog ": Cluster 000D Message: Byte #3 = ${descMap.raw[22..23]} (decimal ${Integer.parseInt(descMap.raw[22..23],16)})"
+		displayInfoLog ": Cluster 000D Message: Byte #4 = ${descMap.raw[24..25]}"
+		displayInfoLog ": Cluster 000D Message: Last 4 bytes = ${descMap.raw[32..39]}"
+		// Handle report messages that the motor has finished opening or closing the curtain
+		if (descMap.value?.startsWith('00000000')) {
+			def newState = "open"
+			if (descMap.value?.endsWith('0000000000')) {
+				newState = "closed"
+				displayInfoLog "has finished closing"
+			}
+			else
+				displayInfoLog "has finished opening"
+			result = [name: "door", value: newState, descriptionText: "$device.displayName is $newState"]
+		}
 	}
 	else
 		displayInfoLog ": Unrecognized Read Attribute Message: $descMap"
-	return [:]
+	return result
 }
 
 private Map parseOpenCloseReport(String description) {
@@ -164,32 +177,43 @@ private Map parseOpenCloseReport(String description) {
 		displayInfoLog ": Close command confirmed"
 	else
 		displayInfoLog ": Open command confirmed"
-	runIn(8, motorFinished)
+	runIn(15, motorFinishedCountdown)
 	return [:]
 }
 
 def close() {
-	displayInfoLog ": Sending close command"
-	zigbee.off()
-	// "st cmd 0x${device.deviceNetworkId} 1 6 0 {}"    <<< This method of sending Zigbee commands has been deprecated
+	def currState = device.currentState('door')?.value
+	if (currState?.startsWith('clos'))
+		displayInfoLog ": Ignoring close request, curtain is already $currentState"
+	else {
+		displayInfoLog ": Sending close command"
+		zigbee.off()
+	}
 }
 
 def open() {
-	displayInfoLog ": Sending open command"
-	zigbee.on()
-	// "st cmd 0x${device.deviceNetworkId} 1 6 1 {}"    <<< This method of sending Zigbee commands has been deprecated
+	def currState = device.currentState('door')?.value
+	if (currState?.startsWith('open'))
+		displayInfoLog ": Ignoring open request, curtain is already $currentState"
+	else {
+		displayInfoLog ": Sending open command"
+		zigbee.on()
+	}
 }
 
-def motorFinished() {
+def motorFinishedCountdown() {
+	def currState = device.currentState('door')?.value
 	def newState = "open"
-	if (device.currentState('door')?.value == "closing")
-		newState = "closed"
-	sendEvent(name: "door", value: newState, descriptionText: "$device.displayName is $newState")
-	displayInfoLog ": Automatically set state to $newState after 8 seconds"
+	if (currState?.endsWith('ing')) {
+		if (newState == "closing")
+			newState = "closed"
+		sendEvent(name: "door", value: newState, descriptionText: "$device.displayName is $newState")
+		displayInfoLog ": Automatically set state to $newState after 15 seconds"
+	}
 }
 
 def refresh() {
-	log.debug "refreshing"
+	displayInfoLog(": Refreshing")
 	zigbee.onOffRefresh() + zigbee.onOffConfig()
 /**
 	// The read attribute commands below use a deprecated method
