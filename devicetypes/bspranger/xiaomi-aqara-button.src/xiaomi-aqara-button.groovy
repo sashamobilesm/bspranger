@@ -1,8 +1,9 @@
 /**
  *  Xiaomi Aqara Zigbee Button
- *  Works with Aqara Button models WXKG11LM / WXKG12LM
- *  and Aqara Smart Light Switch models WXKG02LM / WXKG03LM
- *  Version 1.2.1
+ *  Device Handler for SmartThings
+ *  for Aqara Button models WXKG11LM (original & new revision) / WXKG12LM
+ *  and Aqara Wireless Smart Light Switch models WXKG02LM / WXKG03LM
+ *  Version 1.3b
  *
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -18,10 +19,20 @@
  *  Additional contributions to code by alecm, alixjg, bspranger, gn0st1c, foz333, jmagnuson, rinkek, ronvandegraaf, snalee, tmleafs, twonk, veeceeoh, & xtianpaiva
  *
  *  Notes on capabilities of the different models:
- *  Models WXKG11LM, WXKG02LM, WXKG03LM
+ *  Model WXKG03LM (1 button):
+ *    - Single press results in button 1 "pushed" event
+ *    - Press and hold for more than 400ms results in button 1 "held" event
+ *    - Double click results in button 2 "pushed" event
+ *  Models WXKG11LM (original revision) and WXKG02LM
  *    - Only single press is supported, sent as button 1 "pushed" event
  *    - The 2-button Aqara Smart Light Switch model WXKG02LM is only recognized as ONE button.
  *      This is because the SmartThings API ignores the data that distinguishes between left, right, or both-button presses.
+ *  Model WXKG11LM (new revision):
+ *    - Single click results in button 1 "pushed" event
+ *    - Hold for longer than 400ms results in button 1 "held" event
+ *    - Double click results in button 2 "pushed" event
+ *    - Single or double click results in custom "lastPressedCoRE" event for webCoRE use
+ *    - Release of button results in "lastReleasedCoRE" event for webCoRE use
  *  Model WXKG12LM:
  *    - Single click results in button 1 "pushed" event
  *    - Hold for longer than 400ms results in button 1 "held" event
@@ -31,10 +42,10 @@
  *    - Release of button results in "lastReleasedCoRE" event for webCoRE use
  *
  *  Known issues:
- *  Xiaomi sensors do not seem to respond to refresh requests
- *  Inconsistent rendering of user interface text/graphics between iOS and Android devices - This is due to SmartThings, not this device handler
- *  Pairing Xiaomi sensors can be difficult as they were not designed to use with a SmartThings hub.
- *
+ *    - Xiaomi sensors do not seem to respond to refresh requests
+ *     - Inconsistent rendering of user interface text/graphics between iOS and Android devices - This is due to SmartThings, not this device handler
+ *    - Pairing Xiaomi sensors can be difficult as they were not designed to use with a SmartThings hub.
+ *    - The battery level is not reported at pairing. Wait for the first status report, 50-60 minutes after pairing.
  *
  */
 
@@ -58,9 +69,11 @@ metadata {
 		attribute "batteryRuntime", "string"
 		attribute "buttonStatus", "enum", ["pushed", "held", "single-clicked", "double-clicked", "shaken", "released"]
 
-		// Aqara Button - original revision - model WXKG11LM
+		// Aqara Button - model WXKG11LM (original revision)
 		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,FFFF,0006", outClusters: "0000,0004,FFFF", manufacturer: "LUMI", model: "lumi.sensor_switch.aq2", deviceJoinName: "Aqara Button WXKG11LM"
-		// Aqara Button - new revision - model WXKG12LM
+		// Aqara Button - model WXKG11LM (new revision)
+		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0012,0003", outClusters: "0000", manufacturer: "LUMI", model: "lumi.remote.b1acn01", deviceJoinName: "Aqara Button WXKG11LM r2"
+		// Aqara Button - model WXKG12LM
 		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0001,0006,0012", outClusters: "0000", manufacturer: "LUMI", model: "lumi.sensor_switch.aq3", deviceJoinName: "Aqara Button WXKG12LM"
 		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0001,0006,0012", outClusters: "0000", manufacturer: "LUMI", model: "lumi.sensor_swit", deviceJoinName: "Aqara Button WXKG12LM"
 		// Aqara Smart Light Switch - single button - model WXKG03LM
@@ -68,6 +81,7 @@ metadata {
 		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0003,0019,0012,FFFF", outClusters: "0000,0003,0004,0005,0019,0012,FFFF", manufacturer: "LUMI", model: "lumi.sensor_86sw1", deviceJoinName: "Aqara Switch WXKG03LM"
 		// Aqara Smart Light Switch - dual button - model WXKG02LM
 		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0003,0019,0012,FFFF", outClusters: "0000,0003,0004,0005,0019,0012,FFFF", manufacturer: "LUMI", model: "lumi.sensor_86sw2Un", deviceJoinName: "Aqara Switch WXKG02LM"
+		fingerprint endpointId: "01", profileId: "0104", deviceId: "5F01", inClusters: "0000,0003,0019,0012,FFFF", outClusters: "0000,0003,0004,0005,0019,0012,FFFF", manufacturer: "LUMI", model: "lumi.sensor_86sw2", deviceJoinName: "Aqara Switch WXKG02LM"
 
 		command "resetBatteryRuntime"
 	}
@@ -148,11 +162,11 @@ def parse(description) {
 
 	// Send message data to appropriate parsing function based on the type of report
 	if (description?.startsWith('on/off: ')) {
-		// Model WXKG11LM only - button press generates pushed event
+		// Model WXKG11LM (original revision) only - button press generates pushed event
 		updateLastPressed("pressed")
-		result = mapButtonEvent(0)
+		result = mapButtonEvent(3)
 	} else if (description?.startsWith("read attr - raw: ")) {
-		// Parse any model WXKG12LM button messages, or messages on short-press of reset button
+		// Parse button messages of other models, or messages on short-press of reset button
 		result = parseReadAttrMessage(description)
 	} else if (description?.startsWith('catchall:')) {
 		// Parse battery level from regular hourly announcement messages
@@ -174,14 +188,9 @@ private Map parseReadAttrMessage(String description) {
 	def model = value
 	Map resultMap = [:]
 
-	// Process model WXKG12LM button message
-	if (cluster == "0012") {
-		// Button message values (as integer): 1 = push, 2 = double-click, 16 = hold, 17 = release, 18 = shake
-		value = Integer.parseInt(value[2..3],16)
-		// Convert values 16-18 to 3-5 to use as list for mapButtonEvent function
-		data = (value < 3) ? value : (value - 13)
-		resultMap = mapButtonEvent(data)
-	}
+	// Process models WXKG03LM, WXKG12LM, or WXKG11LM (new revision) button message
+	if (cluster == "0012")
+		resultMap = mapButtonEvent(Integer.parseInt(value[2..3],16))
 
 	// Process message on short-button press containing model name and battery voltage report
 	if (cluster == "0000" && attrId == "0005")	{
@@ -206,12 +215,14 @@ private Map parseReadAttrMessage(String description) {
 	return resultMap
 }
 
-// Create map of values to be used for button event
+// Create map of values to be used for button events
 private mapButtonEvent(value) {
-	def messageType = ["pushed", "single-clicked", "double-clicked", "held", "", "shaken"]
-	def eventType = ["pushed", "pushed", "pushed", "held", "", "pushed"]
-	def buttonNum = [1, 1, 2, 1, 0, 3]
-	if (value == 4) {
+	// WXKG11LM (new revision) message values (as integer): 0: hold, 1 = push, 2 = double-click, 255 = release
+	// WXKG12LM message values (as integer): 1 = push, 2 = double-click, 16 = hold, 17 = release, 18 = shaken
+	def messageType = [0: "held", 1: "single-clicked", 2: "double-clicked", 3: "pushed", 16: "held", 18: "shaken"]
+	def eventType = [0: "held", 1: "pushed", 2: "pushed", 3: "pushed", 16: "held", 18: "pushed"]
+	def buttonNum = [0: 1, 1: 1, 2: 2, 3: 1, 16: 1, 18: 3]
+	if (value == 17 || value == 255) {
 		displayInfoLog(" was released")
 		updateLastPressed("Released")
 		sendEvent(name: "buttonStatus", value: "released", isStateChange: true, displayed: false)
@@ -220,7 +231,7 @@ private mapButtonEvent(value) {
 		displayInfoLog(" was ${messageType[value]} (Button ${buttonNum[value]} ${eventType[value]})")
 		updateLastPressed("Pressed")
 		sendEvent(name: "buttonStatus", value: messageType[value], isStateChange: true, displayed: false)
-		if (value != 3)
+		if (eventType[value] == "pushed")
 			runIn(1, clearButtonStatus)
 		return [
 			name: 'button',
@@ -240,7 +251,7 @@ def updateLastPressed(pressType) {
 }
 
 def clearButtonStatus() {
-	sendEvent(name: "buttonStatus", value: "released", isStateChange: true, displayed: false)	
+	sendEvent(name: "buttonStatus", value: "released", isStateChange: true, displayed: false)
 }
 
 // Check catchall for battery voltage data to pass to getBatteryResult for conversion to percentage report
@@ -305,14 +316,14 @@ def resetBatteryRuntime(paired) {
 def installed() {
 	state.prefsSetCount = 0
 	displayInfoLog(": Installing")
-	init(0)
+	init()
 	checkIntervalEvent("")
 }
 
 // configure() runs after installed() when a sensor is paired
 def configure() {
 	displayInfoLog(": Configuring")
-	init(1)
+	init()
 	checkIntervalEvent("configured")
 	return
 }
@@ -324,7 +335,7 @@ def updated() {
 		state.prefsSetCount = 1
 	else if (state.prefsSetCount < 3)
 		state.prefsSetCount = state.prefsSetCount + 1
-	init(0)
+	init()
 	if (battReset){
 		resetBatteryRuntime()
 		device.updateSetting("battReset", false)
@@ -334,15 +345,40 @@ def updated() {
 	displayDebugLog(": Debug message logging enabled")
 }
 
-def init(displayLog) {
-	def modelName = device.getDataValue("model")
-	def numButtons = (modelName == "lumi.sensor_switch.aq3" || modelName == "lumi.sensor_swit") ? 3 : 1
+def init() {
 	clearButtonStatus()
 	if (!device.currentState('batteryRuntime')?.value)
 		resetBatteryRuntime(true)
-	sendEvent(name: "numberOfButtons", value: numButtons)
-	if (displayLog)
-		displayInfoLog(": Number of buttons = $numButtons")
+	setNumButtons()
+}
+
+def setNumButtons() {
+	def modelName = device.getDataValue("model")
+	def modelText = "Aqara Button WXKG12LM"
+	if (!state.numButtons) {
+		if (modelName.startsWith("lumi.sensor_switch.aq2")) {
+			modelText = "Aqara Button WXKG11LM (original revision)"
+			state.numButtons = 1
+		}
+		else if (modelName.startsWith("lumi.sensor_86sw2")) {
+			modelText = "Aqara Wireless Smart Light Switch WXKG02LM (dual button)"
+			state.numButtons = 1
+		}
+		else if (modelName.startsWith("lumi.remote.b1acn01")) {
+			modelText = "Aqara Button WXKG11LM (new revision)"
+			state.numButtons = 2
+		}
+		else if (modelName.startsWith("lumi.sensor_86sw1")) {
+			modelText = "Aqara Wireless Smart Light Switch WXKG03LM (single button)"
+			state.numButtons = 2
+		}
+		else {
+			state.numButtons = 3
+		}
+		displayInfoLog("Model is $modelText.")
+		displayInfoLog("Number of buttons set to ${state.numButtons}.")
+		sendEvent(name: "numberOfButtons", value: state.numButtons)
+	}
 }
 
 private checkIntervalEvent(text) {
