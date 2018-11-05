@@ -3,7 +3,7 @@
  *  Device Handler for SmartThings
  *  for Aqara Button models WXKG11LM (original & new revision) / WXKG12LM
  *  and Aqara Wireless Smart Light Switch models WXKG02LM / WXKG03LM
- *  Version 1.3b
+ *  Version 1.3.1b
  *
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -19,10 +19,14 @@
  *  Additional contributions to code by alecm, alixjg, bspranger, gn0st1c, foz333, jmagnuson, rinkek, ronvandegraaf, snalee, tmleafs, twonk, veeceeoh, & xtianpaiva
  *
  *  Notes on capabilities of the different models:
- *  Model WXKG03LM (1 button):
+ *  Model WXKG03LM (1 button - Original revision):
+ *    - Single press results in button 1 "pushed" event
+ *  Model WXKG03LM (1 button - New revision):
  *    - Single press results in button 1 "pushed" event
  *    - Press and hold for more than 400ms results in button 1 "held" event
  *    - Double click results in button 2 "pushed" event
+ *  Model WXKG02LM (2 button):
+ *    - Left, right, or both buttons pressed results in button 1 "pushed" event
  *  Models WXKG11LM (original revision) and WXKG02LM
  *    - Only single press is supported, sent as button 1 "pushed" event
  *    - The 2-button Aqara Smart Light Switch model WXKG02LM is only recognized as ONE button.
@@ -62,6 +66,8 @@ metadata {
 
 		attribute "lastCheckin", "string"
 		attribute "lastCheckinCoRE", "string"
+		attribute "lastHeld", "string"
+		attribute "lastHeldCoRE", "string"
 		attribute "lastPressed", "string"
 		attribute "lastPressedCoRE", "string"
 		attribute "lastReleased", "string"
@@ -162,8 +168,8 @@ def parse(description) {
 
 	// Send message data to appropriate parsing function based on the type of report
 	if (description?.startsWith('on/off: ')) {
-		// Model WXKG11LM (original revision) only - button press generates pushed event
-		updateLastPressed("pressed")
+		// Models WXKG11LM (original revision), WXKG03LM (original revision), and WXKG02LM - button press generates pushed event
+		updateLastPressed("Pressed")
 		result = mapButtonEvent(3)
 	} else if (description?.startsWith("read attr - raw: ")) {
 		// Parse button messages of other models, or messages on short-press of reset button
@@ -217,8 +223,9 @@ private Map parseReadAttrMessage(String description) {
 
 // Create map of values to be used for button events
 private mapButtonEvent(value) {
-	// WXKG11LM (new revision) message values (as integer): 0: hold, 1 = push, 2 = double-click, 255 = release
-	// WXKG12LM message values (as integer): 1 = push, 2 = double-click, 16 = hold, 17 = release, 18 = shaken
+	// Model WXKG03LM (new revision) message values: 0: hold, 1 = push, 2 = double-click,
+	// WXKG11LM (new revision) message values: 0: hold, 1 = push, 2 = double-click, 255 = release
+	// WXKG12LM message values: 1 = push, 2 = double-click, 16 = hold, 17 = release, 18 = shaken
 	def messageType = [0: "held", 1: "single-clicked", 2: "double-clicked", 3: "pushed", 16: "held", 18: "shaken"]
 	def eventType = [0: "held", 1: "pushed", 2: "pushed", 3: "pushed", 16: "held", 18: "pushed"]
 	def buttonNum = [0: 1, 1: 1, 2: 2, 3: 1, 16: 1, 18: 3]
@@ -229,7 +236,10 @@ private mapButtonEvent(value) {
 		return [:]
 	} else {
 		displayInfoLog(" was ${messageType[value]} (Button ${buttonNum[value]} ${eventType[value]})")
-		updateLastPressed("Pressed")
+		if (value == 0 || value == 16)
+			updateLastPressed("Held")
+		else
+			updateLastPressed("Pressed")
 		sendEvent(name: "buttonStatus", value: messageType[value], isStateChange: true, displayed: false)
 		if (eventType[value] == "pushed")
 			runIn(1, clearButtonStatus)
@@ -243,7 +253,7 @@ private mapButtonEvent(value) {
 	}
 }
 
-// on any type of button pressed update lastPressed or lastReleased to current date/time
+// on any type of button pressed update lastHeld(CoRE), lastPressed(CoRE), or lastReleased(CoRE) to current date/time
 def updateLastPressed(pressType) {
 	displayDebugLog(": Setting Last $pressType to current date/time")
 	sendEvent(name: "last${pressType}", value: formatDate(), displayed: false)
